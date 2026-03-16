@@ -1,0 +1,40 @@
+# .env
+docker-compose.override.yml
+
+# --- Laravel Specific ---
+/backend/.env
+/backend/.env.testing
+/backend/storage/*.key
+/backend/storage/framework/cache/data/*
+/backend/storage/framework/sessions/*
+/backend/storage/framework/testing/*
+/backend/storage/framework/views/*
+/backend/storage/logs/*.log
+/backend/bootstrap/cache/*
+/backend/public/hot
+/backend/public/storage
+/backend/public/build
+
+# --- PHP / Composer ---
+/backend/vendor/
+.phpunit.result.cache
+.phpstorm.meta.php
+_ide_helper.php
+_ide_helper_models.php
+.php-cs-fixer.cache
+
+# --- Node / Vite ---
+/backend/node_modules/
+/backend/npm-debug.log*
+/backend/yarn-error.log*
+/backend/auth.json
+
+# --- Docker & OS ---
+.DS_Store
+.idea/
+.vscode/
+Thumbs.db
+
+# --- Database ---
+*.sqlite
+*.sqlite-journal
