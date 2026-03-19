@@ -24,23 +24,46 @@ class SlotService {
 
         return Cache::lock($cacheKey . '_lock', 10)->block(5, function () use ($cacheKey) {
             return Cache::remember($cacheKey, 15, function () {
-                return Slot::select('id as slot_id', 'capacity', 'remaining')->get();
+                // return Slot::select('id as slot_id', 'capacity', 'remaining')->get();
+
+                return Slot::query()
+                    // виртуальная колонка. Используется Eager Loading для избежания проблемы N + 1 
+                    ->withCount(['holds as active_holds_count' => function ($query) {
+                        $query->where('status', Hold::STATUS_HELD)
+                            ->where('expires_at', '>', now());
+                    }])
+                    ->get()
+                    ->map(function ($slot) {
+                        return [
+                            'slot_id'   => $slot->id,
+                            'capacity'  => $slot->capacity,
+                            // виртуальный остаток: remaining в БД - активные холды
+                            'remaining' => max(0, $slot->remaining - $slot->active_holds_count),
+                        ];
+                    });
             });
         });
     }
 
     public function createHold(int $slotId, string $idempotencyKey) {
-        // идемпотентность
-        $hold = Hold::where('idempotency_key', $idempotencyKey)->first();
-        if ($hold) {
-            return $hold;
-        }
-
         return DB::transaction(function () use ($slotId, $idempotencyKey) {
+            // Проверка идемпотентности ВНУТРИ транзакции с локом
+            $hold = Hold::where('idempotency_key', $idempotencyKey)->lockForUpdate()->first();
+            if ($hold) {
+                return $hold;
+            }
+
             // блокировка 
             $lockedSlot  = Slot::where('id', $slotId)->lockForUpdate()->firstOrFail();
 
-            if ($lockedSlot->remaining <= 0) {
+            // подсчёт активных холдов
+            $activeHoldsCount = Hold::where('slot_id', $slotId)
+                ->where('status', Hold::STATUS_HELD)
+                ->where('expires_at', '>', now())
+                ->count();
+
+            // Проверка  места с учетом холдов
+            if ($lockedSlot->remaining - $activeHoldsCount <= 0) {
                 return null; // 409 Conflict
             }
 
