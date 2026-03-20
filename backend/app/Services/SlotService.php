@@ -12,9 +12,12 @@ class SlotService {
     
     private const CACHE_KEY = 'slots_availability';
 
+    private const CACHE_TTL = 15;
+
     public function getAvailableSlots() {
 
         $cacheKey = self::CACHE_KEY;
+        $cacheTtl = self::CACHE_TTL;
 
         $data = Cache::get($cacheKey);
 
@@ -22,27 +25,23 @@ class SlotService {
             return $data;
         }
 
-        return Cache::lock($cacheKey . '_lock', 10)->block(5, function () use ($cacheKey) {
-            return Cache::remember($cacheKey, 15, function () {
-                // return Slot::select('id as slot_id', 'capacity', 'remaining')->get();
-
-                return Slot::query()
+        return Cache::lock($cacheKey . '_lock', 10)->block(5, fn() => 
+            Cache::remember($cacheKey, $cacheTtl, fn() => 
+                Slot::query()
                     // виртуальная колонка. Используется Eager Loading для избежания проблемы N + 1 
-                    ->withCount(['holds as active_holds_count' => function ($query) {
+                    ->withCount(['holds as active_holds_count' => fn($query) =>
                         $query->where('status', Hold::STATUS_HELD)
-                            ->where('expires_at', '>', now());
-                    }])
+                            ->where('expires_at', '>', now())
+                    ])
                     ->get()
-                    ->map(function ($slot) {
-                        return [
-                            'slot_id'   => $slot->id,
-                            'capacity'  => $slot->capacity,
-                            // виртуальный остаток: remaining в БД - активные холды
-                            'remaining' => max(0, $slot->remaining - $slot->active_holds_count),
-                        ];
-                    });
-            });
-        });
+                    ->map(fn($slot) => [
+                        'slot_id'   => $slot->id,
+                        'capacity'  => $slot->capacity,
+                        // виртуальный остаток: remaining в БД - активные холды
+                        'remaining' => max(0, $slot->remaining - $slot->active_holds_count),
+                    ])
+            )
+        );
     }
 
     public function createHold(int $slotId, string $idempotencyKey) {
