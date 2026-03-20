@@ -16,7 +16,7 @@ return new class extends Migration
         Schema::create('holds', function (Blueprint $table) {
             $table->id();
             $table->foreignId('slot_id')->constrained();
-            $table->uuid('idempotency_key');
+            $table->uuid('idempotency_key')->unique();
             $table->enum('status', [
                 Hold::STATUS_HELD, 
                 Hold::STATUS_CONFIRMED, 
