@@ -13,6 +13,7 @@ class ClearExpiredHolds extends Command
 
     public function handle()
     {
+        $this->info("Очистка неподтверждённых холдов старше " . Hold::EXPIRES_IN_MINUTES . " минут");
         // просроченные холды в статусе HELD
         $expiredCount = Hold::where('status', Hold::STATUS_HELD)
             ->where('expires_at', '<', now())

@@ -70,7 +70,7 @@ class SlotService {
                 'slot_id' => $lockedSlot->id,
                 'idempotency_key' => $idempotencyKey,
                 'status' => Hold::STATUS_HELD,
-                'expires_at' => now()->addMinutes(5), // Холды живут 5 минут 
+                'expires_at' => now()->addMinutes(Hold::EXPIRES_IN_MINUTES), // Холды живут 5 минут 
             ]);
 
             // инвалидация кеша, т.к. для защиты от овербукинга это метод меняет виртуальный remaining

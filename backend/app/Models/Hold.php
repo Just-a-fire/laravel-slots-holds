@@ -11,6 +11,9 @@ class Hold extends Model
     public const STATUS_CONFIRMED = 'confirmed';
     public const STATUS_CANCELLED = 'cancelled';
 
+    // Время жизни в минутах
+    public const EXPIRES_IN_MINUTES = 5;
+
     protected $fillable = [
         'slot_id',
         'idempotency_key',
