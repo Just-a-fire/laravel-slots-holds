@@ -54,33 +54,39 @@ for arg in "$@"; do
     fi
 done
 
+STATIC_UUID=$(_generate_uuid)
 # Если флаг активен, генерируем один UUID на весь тест
 if [ "$SAME_UUID" = true ]; then
-    STATIC_UUID=$(_generate_uuid)
     echo -e "ℹ️  Используется один UUID: ${YELLOW}$STATIC_UUID${NC}"
 fi
 
+# Подготовка данных перед стартом
+declare -a UUIDS
+for ((i=1; i<=N; i++)); do
+    UUIDS[$i]=$([ "$SAME_UUID" = true ] && echo "$STATIC_UUID" || _generate_uuid)
+done
+
+STATS_FILE=$(mktemp)
 
 echo "🔥 Запуск стресс-теста на $URL ($N параллельных запросов)"
 
 for ((i=1; i<=N; i++))
 do
-    if [ "$SAME_UUID" = true ]; then
-        CURRENT_UUID=$STATIC_UUID
-    else
-        CURRENT_UUID=$(_generate_uuid)
-    fi
+    CURRENT_UUID=${UUIDS[$i]}
 
     # Форматируем номер запроса с пробелами слева
     I_FORMATTED=$(printf "%${WIDTH}d" $i)
-
-    # Выполняем запрос и ловим HTTP-код
+    
     (
+        # Выполняем запрос и ловим HTTP-код
         RESPONSE_CODE=$(
             curl -s -o /dev/null -w "%{http_code}" -X POST "$URL" \
                 -H "Idempotency-Key: $CURRENT_UUID" \
                 -H "Accept: application/json"
         )
+
+        # Сохраняем результат для статистики
+        echo "$RESPONSE_CODE" >> "$STATS_FILE"
 
         # Подсветка: 200/201 - OK, остальное - FAIL
         if [[ "$RESPONSE_CODE" == "200" || "$RESPONSE_CODE" == "201" ]]; then
@@ -91,5 +97,17 @@ do
     ) &
 done
 
+# Ждем завершения всех фоновых процессов
 wait
-echo "✅ Тест завершен."
+
+# 5. Итоговая статистика
+SUCCESS=$(grep -cE '^(200|201)$' "$STATS_FILE" 2>/dev/null || echo 0)
+rm -f "$STATS_FILE"
+
+echo -e "\n📊 Итог: ${GREEN}$SUCCESS${NC} из $N прошли успешно."
+
+if [ "$SUCCESS" -gt 1 ] && [ "$SAME_UUID" = false ]; then
+    echo -e "${RED}⚠️  ВНИМАНИЕ: Обнаружен овербукинг!${NC}"
+elif [ "$SUCCESS" -gt 1 ] && [ "$SAME_UUID" = true ]; then
+    echo -e "${YELLOW}ℹ️  Повторные успешные ответы ожидаемы (идемпотентность).${NC}"
+fi
