@@ -45,37 +45,40 @@ class SlotService {
     }
 
     public function createHold(int $slotId, string $idempotencyKey) {
-        return DB::transaction(function () use ($slotId, $idempotencyKey) {
-            // Проверка идемпотентности ВНУТРИ транзакции с локом
-            $hold = Hold::where('idempotency_key', $idempotencyKey)->lockForUpdate()->first();
-            if ($hold) {
+        // Используем Redis-замок на 10 секунд специально для этого ключа.
+        // Это гарантирует, что только ОДИН процесс с таким UUID войдет в БД.
+        return Cache::lock('hold_create_' . $idempotencyKey, 10)->block(5, function () use ($slotId, $idempotencyKey) {
+            // Внутри замка нам уже не нужен lockForUpdate для идемпотентности, 
+            // так как конкурентов с таким же ключом сюда просто не пустит Redis.
+            $hold = Hold::where('idempotency_key', $idempotencyKey)->first();
+            if ($hold) return $hold; // здесь можно возвращать 200, а не 201
+
+            return DB::transaction(function () use ($slotId, $idempotencyKey) {
+                // блокировка слота (он существует, поэтому Gap Lock не возникнет)
+                $lockedSlot  = Slot::where('id', $slotId)->lockForUpdate()->firstOrFail();
+
+                // подсчёт активных холдов
+                $activeHoldsCount = Hold::where('slot_id', $slotId)
+                    ->where('status', Hold::STATUS_HELD)
+                    ->where('expires_at', '>', now())
+                    ->count();
+
+                // Проверка  места с учетом холдов
+                if ($lockedSlot->remaining - $activeHoldsCount <= 0) {
+                    return null; // 409 Conflict
+                }
+
+                $hold = Hold::create([
+                    'slot_id' => $lockedSlot->id,
+                    'idempotency_key' => $idempotencyKey,
+                    'status' => Hold::STATUS_HELD,
+                    'expires_at' => now()->addMinutes(Hold::EXPIRES_IN_MINUTES), // Холды живут 5 минут 
+                ]);
+
+                // инвалидация кеша, т.к. для защиты от овербукинга это метод меняет виртуальный remaining
+                $this->invalidateCache();
                 return $hold;
-            }
-
-            // блокировка 
-            $lockedSlot  = Slot::where('id', $slotId)->lockForUpdate()->firstOrFail();
-
-            // подсчёт активных холдов
-            $activeHoldsCount = Hold::where('slot_id', $slotId)
-                ->where('status', Hold::STATUS_HELD)
-                ->where('expires_at', '>', now())
-                ->count();
-
-            // Проверка  места с учетом холдов
-            if ($lockedSlot->remaining - $activeHoldsCount <= 0) {
-                return null; // 409 Conflict
-            }
-
-            $hold = Hold::create([
-                'slot_id' => $lockedSlot->id,
-                'idempotency_key' => $idempotencyKey,
-                'status' => Hold::STATUS_HELD,
-                'expires_at' => now()->addMinutes(Hold::EXPIRES_IN_MINUTES), // Холды живут 5 минут 
-            ]);
-
-            // инвалидация кеша, т.к. для защиты от овербукинга это метод меняет виртуальный remaining
-            $this->invalidateCache();
-            return $hold;
+            });
         });
     }
 
