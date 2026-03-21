@@ -44,8 +44,11 @@ services:
     environment:
       MYSQL_DATABASE: ${DB_DATABASE}
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+    # Создание второй базы при первом запуске контейнера
+    command: --init-file /data/application/init-test-db.sql
     volumes:
       - db_data:/var/lib/mysql
+      - ./docker/mysql/init-test-db.sql:/data/application/init-test-db.sql
   
   redis:
     image: redis:alpine

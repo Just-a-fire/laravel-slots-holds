@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Cache;
 class ClearExpiredHolds extends Command
 {
     protected $signature = 'holds:clear-expired';
-    protected $description = 'Отмена непотверждённых холдов, время жизни которых истекло';
+    protected $description = 'Отмена неподтверждённых холдов, время жизни которых истекло';
 
     public function handle()
     {
