@@ -8,6 +8,7 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+
 # Загружаем переменные из .env, который лежит уровнем выше
 if [ -f .env ]; then
     # удаляем Windows-окончания строк через sed 's/\r$//' (важно для WSL/Linux)
@@ -20,13 +21,10 @@ fi
 PORT=${NGINX_PORT:-8080}
 # Тестируем слот №3 (в сидере там обычно 1 место)
 URL="http://localhost:${PORT}/api/slots/3/hold"
-N=10  # Количество запросов
-# Определяем ширину поля на основе максимального числа N
-# Если N < 10, ширина будет 1, если 10-99 — 2, и т.д.
-WIDTH=${#N}
+N=10  # Количество запросов по умолчанию
 SAME_UUID=false
 
-# 2. Оптимизированный выбор генератора UUID (один раз при старте)
+# Оптимизированный выбор генератора UUID (один раз при старте)
 if [ -r /proc/sys/kernel/random/uuid ]; then
     # Самый быстрый способ (Linux/WSL)
     _generate_uuid() { cat /proc/sys/kernel/random/uuid; }
@@ -46,14 +44,45 @@ fi
 #     docker compose exec -T app php -r "echo \Illuminate\Support\Str::uuid();"
 # }
 
-
-# Проверка флага --same-uuid
-for arg in "$@"; do
-    if [ "$arg" == "--same-uuid" ]; then
-        SAME_UUID=true
-    fi
+N_OVERRIDE=""
+# Цикл обработки аргументов (--same-uuid и -n=15)
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -n=*|--n=*)
+            N_OVERRIDE="${1#*=}"
+            shift
+            ;;
+        -n|--n)
+            N_OVERRIDE="$2"
+            shift 2
+            ;;
+        --same-uuid)
+            SAME_UUID=true
+            shift
+            ;;
+        *)
+            shift
+            ;;
+    esac
 done
 
+# Проверка на некорректный ввод N
+if [[ -n "$N_OVERRIDE" ]]; then
+    if [[ ! "$N_OVERRIDE" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}❌ Ошибка: Параметр -n должен быть целым числом (передано: '$N_OVERRIDE')${NC}"
+        exit 1
+    fi
+    if [[ "$N_OVERRIDE" -lt 1 ]]; then
+        echo -e "${RED}❌ Ошибка: Количество запросов должно быть больше 0${NC}"
+        exit 1
+    fi
+    N=$N_OVERRIDE
+    echo -e "🔢 Количество запросов задано вручную: ${YELLOW}$N${NC}"
+fi
+
+# Определяем ширину поля на основе максимального числа N
+# Если N < 10, ширина будет 1, если 10-99 — 2, и т.д.
+WIDTH=${#N}
 STATIC_UUID=$(_generate_uuid)
 # Если флаг активен, генерируем один UUID на весь тест
 if [ "$SAME_UUID" = true ]; then
@@ -67,6 +96,9 @@ for ((i=1; i<=N; i++)); do
 done
 
 STATS_FILE=$(mktemp)
+
+# фиксируем время старта
+START_TIME=$(date +%s.%N 2>/dev/null || date +%s)
 
 echo "🔥 Запуск стресс-теста на $URL ($N параллельных запросов)"
 
@@ -100,11 +132,34 @@ done
 # Ждем завершения всех фоновых процессов
 wait
 
-# 5. Итоговая статистика
-SUCCESS=$(grep -cE '^(200|201)$' "$STATS_FILE" 2>/dev/null || echo 0)
+# Конец замера времени
+END_TIME=$(date +%s.%N 2>/dev/null || date +%s)
+# РАСЧЕТ 
+# Считается время выполнения именно самого цикла стрельбы, без подготовки (генерация UUID, загрузка .env)
+# Выбор самый быстрый доступный калькулятор
+if [[ "$START_TIME" == *"."* && "$END_TIME" == *"."* ]]; then
+    # Если есть наносекунды (Linux/WSL)
+    if command -v bc >/dev/null 2>&1; then
+        DURATION=$(echo "$END_TIME - $START_TIME" | bc | awk '{printf "%.2f", $0}')
+    else
+        # Простой расчет через awk (обычно есть везде в паре с bash)
+        DURATION=$(awk -v s="$START_TIME" -v e="$END_TIME" 'BEGIN {printf "%.2f", e - s}')
+    fi
+else
+    # Если наносекунд нет (Git Bash / Windows)
+    # Используем PowerShell один раз для вычитания (он точнее секунд)
+    DURATION=$(powershell.exe -Command "[round]($END_TIME - $START_TIME, 2)" | tr -d '\r')
+    
+    # Если PowerShell вернул пустоту (вдруг), считаем просто секунды
+    DURATION=${DURATION:-$((END_TIME - START_TIME))}
+fi
+
+# Итоговая статистика
+SUCCESS=$(grep -cE '^(200|201)$' "$STATS_FILE" 2>/dev/null)
 rm -f "$STATS_FILE"
 
 echo -e "\n📊 Итог: ${GREEN}$SUCCESS${NC} из $N прошли успешно."
+echo -e "⏱️  Время выполнения: ${YELLOW}${DURATION} сек.${NC}"
 
 if [ "$SUCCESS" -gt 1 ] && [ "$SAME_UUID" = false ]; then
     echo -e "${RED}⚠️  ВНИМАНИЕ: Обнаружен овербукинг!${NC}"

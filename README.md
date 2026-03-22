@@ -71,6 +71,10 @@ docker compose exec app php artisan test ./tests/Feature/SlotBookingTest.php
 chmod +x scripts/stress_test.sh
 ./scripts/stress_test.sh
 ```
+Количество запросов можно указать, задав параметр `n`
+```bash
+./scripts/stress_test.sh -n=20
+```
 #### Ожидаемый результат
 Если в базе у слота №3 **остаток 1**, а мы отправили 10 запросов с **разными** UUID:
 - **1 запрос:** Вернёт `201 Created` (успешный холд).
