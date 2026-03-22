@@ -3,26 +3,37 @@
 namespace App\Console\Commands;
 
 use App\Models\Hold;
+use App\Services\SlotService;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Cache;
 
 class ClearExpiredHolds extends Command
 {
     protected $signature = 'holds:clear-expired';
-    protected $description = 'Отмена неподтверждённых холдов, время жизни которых истекло';
+    protected $description = 'Отмена неподтверждённых холдов, время жизни которых истекло, и синхронизация Redis';
 
-    public function handle()
+    public function handle(SlotService $slotService)
     {
         $this->info("Очистка неподтверждённых холдов старше " . Hold::EXPIRES_IN_MINUTES . " минут");
-        // просроченные холды в статусе HELD
-        $expiredCount = Hold::where('status', Hold::STATUS_HELD)
+
+        $affectedSlotIds = Hold::where('status', Hold::STATUS_HELD)
+            ->where('expires_at', '<', now())
+            ->pluck('slot_id')
+            ->unique();
+
+        if ($affectedSlotIds->isEmpty()) {
+            $this->info("Просроченных холдов не найдено.");
+            return;
+        }
+
+        $updatedCount = Hold::where('status', Hold::STATUS_HELD)
             ->where('expires_at', '<', now())
             ->update(['status' => Hold::STATUS_CANCELLED]);
 
-        if ($expiredCount > 0) { // если такие нашлись
-            // инвалидируем кеш, так как доступность (remaining) слотов изменилась
-            Cache::forget('slots_availability');
-            $this->info("Очищено холдов: {$expiredCount}");
+        // Синхронизируем каждый затронутый слот в Redis
+        foreach ($affectedSlotIds as $slotId) {
+            $slotService->syncSlotToRedis($slotId);
         }
+
+        $this->info("Очищено холдов: {$updatedCount}. Обновлено слотов в Redis: " . $affectedSlotIds->count());
     }
 }

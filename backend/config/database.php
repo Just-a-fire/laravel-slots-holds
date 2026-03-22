@@ -150,6 +150,9 @@ return [
 
         'options' => [
             'cluster' => env('REDIS_CLUSTER', 'redis'),
+            // если к этому Редис подключится другой сервис (не на Laravel, например, на Go или Python) или писать LUA-скрипты, 
+            // то проще оставить пустым или вынести в общий .env
+            // 'prefix' => '',
             'prefix' => env('REDIS_PREFIX', Str::slug((string) env('APP_NAME', 'laravel')).'-database-'),
             'persistent' => env('REDIS_PERSISTENT', false),
         ],

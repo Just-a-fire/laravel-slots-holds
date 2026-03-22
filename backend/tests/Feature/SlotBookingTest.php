@@ -5,9 +5,10 @@ namespace Tests\Feature;
 use App\Console\Commands\ClearExpiredHolds;
 use App\Models\Hold;
 use App\Models\Slot;
+use App\Services\SlotService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\WithFaker;
-use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -24,8 +25,13 @@ class SlotBookingTest extends TestCase
         if (strripos($databaseName, 'test') === false) {
             throw new \Exception("ОПАСНОСТЬ: Тест пытается использовать рабочую ($databaseName) базу данных!");
         }
+    }
 
-        Cache::flush(); // Очистка кеша перед тестами
+    protected function tearDown(): void
+    {
+        // Очищаем Redis после каждого теста
+        Redis::flushdb();
+        parent::tearDown();
     }
 
     #[Test]
@@ -41,6 +47,9 @@ class SlotBookingTest extends TestCase
             'status' => Hold::STATUS_HELD,
             'expires_at' => now()->addMinutes(Hold::EXPIRES_IN_MINUTES)
         ]);
+
+        // Синхронизируем Redis после ручного создания холда
+        app(SlotService::class)->syncSlotToRedis($slot->id);
 
         // 3. Запрос доступности должен вернуть remaining: 0
         $response = $this->getJson('/api/slots/availability');
@@ -93,6 +102,8 @@ class SlotBookingTest extends TestCase
         // 1. Создаем слот с 1 местом
         $slot = Slot::create(['capacity' => 1, 'remaining' => 1]);
 
+        app(SlotService::class)->syncSlotToRedis($slot->id);
+
         // 2. Создаем холд (занимает виртуальное место)
         $this->withHeaders(['Idempotency-Key' => 'uuid-1'])
             ->postJson("/api/slots/{$slot->id}/hold")
@@ -117,6 +128,42 @@ class SlotBookingTest extends TestCase
             'idempotency_key' => 'uuid-1',
             'status' => 'cancelled'
         ]);
+    }
+
+    #[Test]
+    public function it_synchronizes_redis_atomically_after_hold_creation()
+    {
+        $remaining = 10;
+        $slot = Slot::create(['capacity' => 10, 'remaining' => $remaining]);
+        
+        // 1. Создаем холд
+        $this->withHeaders(['Idempotency-Key' => 'test-sync'])
+            ->postJson("/api/slots/{$slot->id}/hold");
+
+        // 2. Проверяем, что в Redis (БД 2) данные обновились мгновенно
+        $remainingInRedis = Redis::zscore(SlotService::ZSET_KEY, $slot->id);
+        
+        // Должно быть 9 (10 в базе - 1 активный холд)
+        $this->assertEquals($remaining - 1, (int)$remainingInRedis);
+    }
+
+    #[Test]
+    public function it_rebuilds_cache_from_db_if_redis_is_empty()
+    {
+        $remaining = 5;
+        $slot = Slot::create(['capacity' => 5, 'remaining' => $remaining]);
+        
+        // 1. Полностью очищаем Redis БД №2 
+        Redis::flushdb();
+        $this->assertEquals(0, Redis::exists(SlotService::ZSET_KEY));
+
+        // 2. Запрос к API инициирует warmUpCache()
+        $response = $this->getJson('/api/slots/availability');
+
+        // 3. Проверяем, что кеш самовосстановился
+        $response->assertStatus(200);
+        $this->assertEquals(1, Redis::exists(SlotService::ZSET_KEY)); 
+        $this->assertEquals($remaining, (int)Redis::zscore(SlotService::ZSET_KEY, $slot->id));
     }
 
 }

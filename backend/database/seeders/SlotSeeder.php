@@ -2,10 +2,11 @@
 
 namespace Database\Seeders;
 
+use App\Models\Slot;
+use App\Services\SlotService;
+
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
-
-use App\Models\Slot;
 
 class SlotSeeder extends Seeder
 {
@@ -14,8 +15,14 @@ class SlotSeeder extends Seeder
      */
     public function run(): void
     {
-        Slot::create(['capacity' => 10, 'remaining' => 6]);
-        Slot::create(['capacity' => 5, 'remaining' => 5]);
-        Slot::create(['capacity' => 1, 'remaining' => 1]);
+        $data = [
+            ['capacity' => 10, 'remaining' => 6],
+            ['capacity' => 5, 'remaining' => 5],
+            ['capacity' => 1, 'remaining' => 1],
+        ];
+        foreach ($data as $datum) {
+            $slot = Slot::create($datum);
+            app(SlotService::class)->syncSlotToRedis($slot->id);
+        }
     }
 }
